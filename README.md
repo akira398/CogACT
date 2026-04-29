@@ -14,6 +14,7 @@ This is the code for CogACT: A Foundational Vision-Language-Action Model for Syn
  * [**Fully Fine-Tuning**](#fully-fine-tuning)
  * [**Training CogACT from Scratch**](#training-cogact-from-scratch)
  * [**Evaluation in SIMPLER**](#evaluation-in-simpler)
+ * [**RoboCasa365 Evaluation & Fine-Tuning**](#robocasa365-evaluation--fine-tuning)
  * [**Deployment in The Real World**](#deployment-in-the-real-world)
  * [**Inference Speed**](#inference-speed)
 ## Installation
@@ -196,6 +197,28 @@ After that, you can modify and launch the scripts in [`sim_cogact/scripts`](sim_
 ```bash
 cd <your_path_to_simpler>
 bash simpler_env/policies/sim_cogact/scripts/cogact_put_in_drawer_visual_matching.sh
+```
+
+## RoboCasa365 Evaluation & Fine-Tuning
+
+See **[ROBOCASA.md](./ROBOCASA.md)** for a complete step-by-step guide covering:
+
+- Conda environment setup
+- Installing RoboCasa and downloading assets
+- Downloading the pretrained CogACT checkpoint
+- Downloading the RoboCasa365 dataset
+- Computing action normalization statistics for zero-shot evaluation
+- Running the exact RoboCasa365 evaluation protocol (50 tasks, 3 splits, 5 fixed scenes × 10 trials)
+- Fine-tuning on RoboCasa with configurable freeze modes (`dit_only` / `llm_frozen` / `full`)
+- Evaluating the fine-tuned model
+
+Quick start:
+```bash
+conda create -n cogact python=3.10 -y && conda activate cogact
+pip install -e . && pip install robosuite
+git clone https://github.com/robocasa/robocasa.git third_party/robocasa && pip install -e third_party/robocasa
+python scripts/download_pretrained_cogact.py --model_id CogACT/CogACT-Base --save_dir pretrained/CogACT-Base
+python scripts/eval_robocasa365.py --model_path pretrained/CogACT-Base --norm_stats_path data/robocasa/dataset_statistics.json --unnorm_key robocasa
 ```
 
 ## Deployment in The Real World
