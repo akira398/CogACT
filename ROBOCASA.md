@@ -88,31 +88,59 @@ pretrained/CogACT-Base/
 
 ## 4. Download the dataset
 
-The RoboCasa365 benchmark trains and evaluates on 50 tasks split into three groups.
-For fine-tuning you need the training demos; for zero-shot evaluation you only need
-a small sample to compute normalization statistics (Step 5).
+RoboCasa365 uses its own built-in download script (`robocasa.scripts.download_datasets`).
+Data is split into two roles:
+
+| Split | Use | Size |
+|---|---|---|
+| `target` | Evaluation norm-stats + fine-tuning on eval tasks | ~193 h, 500 demos/task |
+| `pretrain` | Large-scale multi-task pre-training | ~482 h human + 1,615 h synthetic |
+
+> **For evaluation only (Steps 5–6) you only need `--split target`.**  
+> The simulator itself runs from installed RoboCasa — no data needed at eval time.  
+> Data is only required to compute action normalization statistics (Step 5).
+
+### Download the 50 evaluation task demos (target split)
+
+This downloads human demos for all 50 RoboCasa365 evaluation tasks
+(18 atomic-seen + 16 composite-seen + 16 composite-unseen):
 
 ```bash
-# Option A — download one task at a time (recommended to start)
-bash scripts/setup_robocasa.sh PnPCounterToCab 50 data/robocasa
+python -m robocasa.scripts.download_datasets \
+    --split target \
+    --source human
+```
 
-# Option B — download all 24 original atomic tasks (~1,200 demos total)
-TASKS=(
-  PickPlaceCounterToCabinet PickPlaceCounterToStove PickPlaceDrawerToCounter
-  PickPlaceSinkToCounter TurnOnMicrowave TurnOffMicrowave TurnOnSinkFaucet
-  TurnOffSinkFaucet TurnSinkSpout OpenCabinet OpenDrawer CloseFridge
-  CloseToasterOvenDoor OpenStandMixerHead CoffeeSetupMug NavigateKitchen
-  SlideDishwasherRack TurnOffStove
-)
-for TASK in "${TASKS[@]}"; do
-  bash scripts/setup_robocasa.sh "$TASK" 50 data/robocasa
-done
+Data lands in `datasets/` by default (set `DATASET_BASE_PATH` in
+`third_party/robocasa/robocasa/macros_private.py` to change it).
 
-# Option C — use the Hugging Face dataset (all 24 tasks, pre-packaged)
-pip install huggingface_hub
-huggingface-cli download nvidia/RoboCasa-Cosmos-Policy \
-    --repo-type dataset \
-    --local-dir data/robocasa-cosmos
+To download only a specific subset (e.g., just the 18 atomic-seen tasks for a quick start):
+
+```bash
+python -m robocasa.scripts.download_datasets \
+    --split target --source human \
+    --tasks \
+        CloseBlenderLid CloseFridge CloseToasterOvenDoor CoffeeSetupMug \
+        NavigateKitchen OpenCabinet OpenDrawer OpenStandMixerHead \
+        PickPlaceCounterToCabinet PickPlaceCounterToStove PickPlaceDrawerToCounter \
+        PickPlaceSinkToCounter PickPlaceToasterToCounter SlideDishwasherRack \
+        TurnOffStove TurnOnElectricKettle TurnOnMicrowave TurnOnSinkFaucet
+```
+
+Preview what would be downloaded without actually downloading:
+
+```bash
+python -m robocasa.scripts.download_datasets --split target --source human --dryrun
+```
+
+### Download pretraining data (for fine-tuning only)
+
+```bash
+# Human pretraining demos — 300 tasks, ~482 h
+python -m robocasa.scripts.download_datasets --split pretrain --source human
+
+# Synthetic MimicGen demos — 60 atomic tasks, ~1,615 h (optional, very large)
+python -m robocasa.scripts.download_datasets --split pretrain --source mimicgen
 ```
 
 ---

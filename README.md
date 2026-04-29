@@ -217,8 +217,10 @@ Quick start:
 conda create -n cogact python=3.10 -y && conda activate cogact
 pip install -e . && pip install robosuite
 git clone https://github.com/robocasa/robocasa.git third_party/robocasa && pip install -e third_party/robocasa
+python -m robocasa.scripts.download_datasets --split target --source human   # 50 eval tasks
 python scripts/download_pretrained_cogact.py --model_id CogACT/CogACT-Base --save_dir pretrained/CogACT-Base
-python scripts/eval_robocasa365.py --model_path pretrained/CogACT-Base --norm_stats_path data/robocasa/dataset_statistics.json --unnorm_key robocasa
+python scripts/compute_robocasa_stats.py --data_root datasets/ --output_path datasets/dataset_statistics.json
+python scripts/eval_robocasa365.py --model_path pretrained/CogACT-Base --norm_stats_path datasets/dataset_statistics.json --unnorm_key robocasa
 ```
 
 ## Deployment in The Real World
