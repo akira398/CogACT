@@ -112,7 +112,8 @@ This downloads human demos for all 50 RoboCasa365 evaluation tasks
 (18 atomic-seen + 16 composite-seen + 16 composite-unseen):
 
 ```bash
-python -m robocasa.scripts.download_datasets \
+# The script prompts "Proceed? (y/n)" — pipe `y` to bypass it
+echo "y" | python -m robocasa.scripts.download_datasets \
     --split target \
     --source human
 ```
@@ -123,7 +124,7 @@ Data lands in `datasets/` by default (set `DATASET_BASE_PATH` in
 To download only a specific subset (e.g., just the 18 atomic-seen tasks for a quick start):
 
 ```bash
-python -m robocasa.scripts.download_datasets \
+echo "y" | python -m robocasa.scripts.download_datasets \
     --split target --source human \
     --tasks \
         CloseBlenderLid CloseFridge CloseToasterOvenDoor CoffeeSetupMug \
@@ -133,7 +134,7 @@ python -m robocasa.scripts.download_datasets \
         TurnOffStove TurnOnElectricKettle TurnOnMicrowave TurnOnSinkFaucet
 ```
 
-Preview what would be downloaded without actually downloading:
+Preview what would be downloaded without actually downloading (no prompt for dryrun):
 
 ```bash
 python -m robocasa.scripts.download_datasets --split target --source human --dryrun
@@ -143,10 +144,10 @@ python -m robocasa.scripts.download_datasets --split target --source human --dry
 
 ```bash
 # Human pretraining demos — 300 tasks, ~482 h
-python -m robocasa.scripts.download_datasets --split pretrain --source human
+echo "y" | python -m robocasa.scripts.download_datasets --split pretrain --source human
 
 # Synthetic MimicGen demos — 60 atomic tasks, ~1,615 h (optional, very large)
-python -m robocasa.scripts.download_datasets --split pretrain --source mimicgen
+echo "y" | python -m robocasa.scripts.download_datasets --split pretrain --source mimicgen
 ```
 
 ---
