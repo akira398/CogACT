@@ -51,10 +51,16 @@ pip install robosuite
 # Clone and install RoboCasa v1.0 (RoboCasa365)
 mkdir -p third_party
 git clone https://github.com/robocasa/robocasa.git third_party/robocasa
-pip install -e third_party/robocasa
+cd third_party/robocasa
+pip install -e .
 
-# Download kitchen assets (textures, objects, fixtures — ~2 GB)
-python -c "import robocasa; robocasa.utils.download_assets()"
+# Set up macros / system paths (creates macros_private.py)
+python robocasa/scripts/setup_macros.py
+
+# Download kitchen assets: textures, objects, fixtures (~10 GB)
+python -m robocasa.scripts.download_kitchen_assets
+
+cd ../..
 ```
 
 ---
