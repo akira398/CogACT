@@ -147,3 +147,10 @@ dmypy.json
 # Caches and Datasets
 cache/
 data/
+
+# Large local directories (models, third-party installs, datasets, results)
+pretrained/
+third_party/
+datasets/
+runs/
+results/
