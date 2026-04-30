@@ -45,9 +45,10 @@ pip install "flash-attn==2.5.5" --no-build-isolation
 ## 2. Install RoboCasa
 
 ```bash
-# Install robosuite from source (master branch required — PyPI releases lack
-# load_model_on_init which robocasa v1.0 depends on)
-pip install git+https://github.com/ARISE-Initiative/robosuite.git
+# Install robosuite from master branch — the @master suffix is required.
+# PyPI releases (including 1.5.x) lack load_model_on_init and enable_multiccd
+# which robocasa v1.0 depends on.
+pip install git+https://github.com/ARISE-Initiative/robosuite.git@master
 
 # Clone and install RoboCasa v1.0 (RoboCasa365)
 mkdir -p third_party
