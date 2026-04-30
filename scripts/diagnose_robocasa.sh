@@ -89,14 +89,49 @@ fi
 echo ""
 echo "── OBJ_CATEGORIES (registered kitchen objects) ───────"
 python -c "
+import os
 try:
     from robocasa.models.objects.kitchen_object_utils import OBJ_CATEGORIES
     cats = list(OBJ_CATEGORIES.keys())
     print(f'categories found: {len(cats)}')
     print('first 5:', cats[:5])
+
+    # Check apple category mjcf_paths
+    cat = 'apple'
+    total_paths = 0
+    missing = 0
+    for reg, info in OBJ_CATEGORIES.get(cat, {}).items():
+        paths = getattr(info, 'mjcf_paths', [])
+        total_paths += len(paths)
+        for p in paths:
+            if not os.path.exists(p): missing += 1
+        print(f'  {cat}/{reg}: {len(paths)} mjcf_paths, first={paths[0] if paths else \"(none)\"}')
+    if total_paths == 0:
+        print('  WARNING: apple has NO mjcf_paths — assets likely not downloaded to correct location')
+    elif missing:
+        print(f'  WARNING: {missing}/{total_paths} xml paths do not exist on disk')
+    else:
+        print(f'  OK: all {total_paths} paths exist on disk')
+
+    cats_with_paths = sum(
+        1 for c in OBJ_CATEGORIES
+        for reg, info in OBJ_CATEGORIES[c].items()
+        if getattr(info, 'mjcf_paths', [])
+    )
+    print(f'categories with >=1 mjcf_path: {cats_with_paths}/{len(cats)}')
 except Exception as e:
-    print('ERROR:', e)
+    import traceback; traceback.print_exc()
 " 2>/dev/null
+
+# ── Asset file counts ─────────────────────────────────────
+echo ""
+echo "── Asset file counts ─────────────────────────────────"
+RCDIR=$(python -c "import os,robocasa; print(os.path.dirname(robocasa.__file__))" 2>/dev/null | tail -1)
+echo "robocasa dir: $RCDIR"
+echo "XML files in models/: $(find "$RCDIR/models" -name '*.xml' 2>/dev/null | wc -l)"
+echo "OBJ files in models/: $(find "$RCDIR/models" -name '*.obj' 2>/dev/null | wc -l)"
+echo "PNG/JPG in models/:   $(find "$RCDIR/models" \( -name '*.png' -o -name '*.jpg' \) 2>/dev/null | wc -l)"
+echo "models/ subdirs:      $(ls "$RCDIR/models" 2>/dev/null)"
 
 # ── Quick env creation test ───────────────────────────────
 echo ""
