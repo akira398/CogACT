@@ -156,6 +156,49 @@ def _patch_robosuite_compat() -> None:
     except Exception:
         pass
 
+    try:
+        import robocasa.utils.env_utils as _eu
+
+        def _patched_set_robot_base(env, anchor_pos, anchor_ori, rot_dev, pos_dev_x, pos_dev_y):
+            assert len(env.robots) == 1
+            try:
+                yaw_addr = env.sim.model.get_joint_qpos_addr("mobilebase0_joint_mobile_yaw")
+                try:
+                    from robocasa.utils.env_utils import no_collision
+                    ctx = no_collision(env.sim)
+                except (ImportError, AttributeError):
+                    from contextlib import nullcontext
+                    ctx = nullcontext()
+                with ctx:
+                    env.sim.data.qpos[yaw_addr] = env.rng.uniform(-rot_dev, rot_dev)
+                    env.sim.forward()
+            except ValueError:
+                pass  # fixed-base robot — no mobile yaw joint
+
+            initial_state_copy = env.sim.get_state()
+            found_valid = False
+            cur_dev_pos_x = pos_dev_x
+            cur_dev_pos_y = pos_dev_y
+            while not found_valid:
+                for _ in range(50):
+                    robot_pos = _eu.generate_random_robot_pos(
+                        env=env, anchor_pos=anchor_pos, anchor_ori=anchor_ori,
+                        pos_dev_x=cur_dev_pos_x, pos_dev_y=cur_dev_pos_y,
+                    )
+                    _eu.set_robot_to_position(env, robot_pos)
+                    env.sim.forward()
+                    if not _eu.detect_robot_collision(env):
+                        found_valid = True
+                        break
+                    env.sim.set_state(initial_state_copy)
+                cur_dev_pos_x += 0.10
+                cur_dev_pos_y += 0.05
+            return robot_pos
+
+        _eu.set_robot_base = _patched_set_robot_base
+    except Exception:
+        pass
+
 
 def test_env(task: str = "TurnOnMicrowave") -> bool:
     section(f"2. RoboCasa environment ({task})")
