@@ -407,6 +407,26 @@ def _patch_robosuite_compat() -> None:
     except Exception:
         pass
 
+    # robocasa's DEFAULT camera configs attach agentview cameras to
+    # 'mobilebase0_support' (PandaMobile only).  For fixed-base Panda, that
+    # body doesn't exist so edit_model_xml silently skips the cameras.
+    # Add a "Panda" entry that remaps them to 'robot0_base' instead.
+    try:
+        from copy import deepcopy
+        from robocasa.utils import camera_utils as _cu
+
+        if "Panda" not in _cu.CAM_CONFIGS:
+            panda_overrides = {}
+            for _cam_name, _cam_cfg in _cu.CAM_CONFIGS.get("DEFAULT", {}).items():
+                if _cam_cfg.get("parent_body") == "mobilebase0_support":
+                    _cfg = deepcopy(_cam_cfg)
+                    _cfg["parent_body"] = "robot0_base"
+                    panda_overrides[_cam_name] = _cfg
+            if panda_overrides:
+                _cu.CAM_CONFIGS["Panda"] = panda_overrides
+    except Exception:
+        pass
+
 
 def make_env(
     task_name: str,
