@@ -45,8 +45,9 @@ pip install "flash-attn==2.5.5" --no-build-isolation
 ## 2. Install RoboCasa
 
 ```bash
-# Install robosuite (robot simulation backend) — v1.5+ required for robocasa v1.0
-pip install "robosuite>=1.5.0"
+# Install robosuite from source (master branch required — PyPI releases lack
+# load_model_on_init which robocasa v1.0 depends on)
+pip install git+https://github.com/ARISE-Initiative/robosuite.git
 
 # Clone and install RoboCasa v1.0 (RoboCasa365)
 mkdir -p third_party
@@ -61,6 +62,30 @@ python robocasa/scripts/setup_macros.py
 python -m robocasa.scripts.download_kitchen_assets
 
 cd ../..
+```
+
+---
+
+## 2b. Verify the setup
+
+After installing everything, run the quick sanity check before the full eval:
+
+```bash
+python scripts/test_setup.py \
+    --model_path pretrained/CogACT-Base \
+    --action_model_type DiT-B \
+    --norm_stats_path data/robocasa/dataset_statistics.json \
+    --unnorm_key robocasa
+```
+
+This checks imports, robosuite API compatibility, env creation, model load, and one inference call — takes ~30 seconds and catches all common failures before committing to a full eval run.
+
+```bash
+# Env only (no model needed):
+python scripts/test_setup.py --skip_model
+
+# Model only (no sim needed):
+python scripts/test_setup.py --model_path pretrained/CogACT-Base --skip_env
 ```
 
 ---
