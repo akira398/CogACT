@@ -146,13 +146,26 @@ def _patch_robosuite_compat() -> None:
         from robosuite.environments.base import MujocoEnv
         _orig_renderer = MujocoEnv.initialize_renderer
         def _safe_renderer(self):
-            if not getattr(self, "has_renderer", True):
-                return
             try:
                 _orig_renderer(self)
-            except ValueError:
-                pass
+            except ValueError as e:
+                if "camera" in str(e).lower():
+                    pass  # kitchen cameras not assembled yet — safe to ignore
+                else:
+                    raise
         MujocoEnv.initialize_renderer = _safe_renderer
+    except Exception:
+        pass
+
+    try:
+        from robosuite.utils.observables import Observable
+        _orig_check_sensor = Observable._check_sensor_validity
+        def _lenient_check_sensor(self):
+            try:
+                _orig_check_sensor(self)
+            except ValueError:
+                self._data_shape = None
+        Observable._check_sensor_validity = _lenient_check_sensor
     except Exception:
         pass
 

@@ -340,20 +340,37 @@ def _patch_robosuite_compat() -> None:
         pass
 
     # robosuite 1.5.2 calls initialize_renderer() during __init__ before the
-    # full kitchen scene is assembled, so the render camera doesn't exist yet.
-    # Since we always use has_renderer=False the onscreen renderer is never
-    # needed — make initialize_renderer a no-op when has_renderer is False.
+    # full kitchen scene (with agentview cameras) is assembled.  Catch the
+    # camera-not-found ValueError so the offscreen renderer can still be set up.
     try:
         from robosuite.environments.base import MujocoEnv
         _orig_renderer = MujocoEnv.initialize_renderer
         def _safe_renderer(self):
-            if not getattr(self, "has_renderer", True):
-                return
             try:
                 _orig_renderer(self)
-            except ValueError:
-                pass
+            except ValueError as e:
+                if "camera" in str(e).lower():
+                    pass  # kitchen cameras not assembled yet — safe to ignore
+                else:
+                    raise
         MujocoEnv.initialize_renderer = _safe_renderer
+    except Exception:
+        pass
+
+    # Observable._check_sensor_validity fires during __init__ and tries to
+    # render from each camera to determine its output shape.  The kitchen
+    # agentview cameras only exist after the first _reset_internal, so the
+    # render fails.  Suppress the error; _data_shape will be resolved on first
+    # actual use after env.reset() assembles the full kitchen model.
+    try:
+        from robosuite.utils.observables import Observable
+        _orig_check_sensor = Observable._check_sensor_validity
+        def _lenient_check_sensor(self):
+            try:
+                _orig_check_sensor(self)
+            except ValueError:
+                self._data_shape = None
+        Observable._check_sensor_validity = _lenient_check_sensor
     except Exception:
         pass
 
