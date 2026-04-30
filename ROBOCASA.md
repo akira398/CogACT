@@ -45,8 +45,8 @@ pip install "flash-attn==2.5.5" --no-build-isolation
 ## 2. Install RoboCasa
 
 ```bash
-# Install robosuite (robot simulation backend)
-pip install robosuite
+# Install robosuite (robot simulation backend) — v1.5+ required for robocasa v1.0
+pip install "robosuite>=1.5.0"
 
 # Clone and install RoboCasa v1.0 (RoboCasa365)
 mkdir -p third_party
