@@ -299,21 +299,35 @@ def _load_controller_config(controller_name: str) -> dict:
     return loader(default_controller=controller_name)
 
 
-def _patch_manipulation_env() -> None:
-    """Patch ManipulationEnv to accept load_model_on_init if missing.
+def _patch_robosuite_compat() -> None:
+    """Patch robosuite 1.5.x to accept kwargs that robocasa v1.0 passes.
 
-    robocasa v1.0 passes load_model_on_init= to ManipulationEnv, but robosuite
-    1.5.x (PyPI) doesn't have this parameter yet. Accept and ignore it so env
-    creation works with any robosuite release.
+    robocasa v1.0 was written against robosuite master which added:
+      - load_model_on_init  in ManipulationEnv.__init__
+      - enable_multiccd     in Task.__init__ (via ManipulationTask)
+    Neither exists in any released robosuite (1.5.x on PyPI). We accept and
+    drop them so env creation works without modifying robosuite source.
     """
     import inspect
+
+    def _add_kwarg(cls, param: str, default) -> None:
+        if param in inspect.signature(cls.__init__).parameters:
+            return
+        _orig = cls.__init__
+        def _patched(self, *args, **kwargs):
+            kwargs.pop(param, None)
+            return _orig(self, *args, **kwargs)
+        cls.__init__ = _patched
+
     try:
         from robosuite.environments.manipulation.manipulation_env import ManipulationEnv
-        if "load_model_on_init" not in inspect.signature(ManipulationEnv.__init__).parameters:
-            _orig = ManipulationEnv.__init__
-            def _patched(self, *args, load_model_on_init=True, **kwargs):
-                return _orig(self, *args, **kwargs)
-            ManipulationEnv.__init__ = _patched
+        _add_kwarg(ManipulationEnv, "load_model_on_init", True)
+    except Exception:
+        pass
+
+    try:
+        from robosuite.models.tasks import Task
+        _add_kwarg(Task, "enable_multiccd", False)
     except Exception:
         pass
 
@@ -335,7 +349,7 @@ def make_env(
         import robocasa.environments  # noqa: F401 — registers all RoboCasa envs
     except ImportError:
         import robocasa  # noqa: F401
-    _patch_manipulation_env()
+    _patch_robosuite_compat()
 
     env_kwargs = dict(
         env_name=task_name,
