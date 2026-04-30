@@ -692,15 +692,47 @@ def _record_gt_video(
     out_path: Path,
     fps: int,
 ) -> None:
-    """Replay a GT demo in simulation and save as video."""
-    import robosuite as suite
+    """Save a GT demo video.
 
+    First tries to copy a pre-rendered MP4 directly from the LeRobot dataset
+    (fast, no simulation needed, correct camera).  Falls back to simulation
+    replay only if no pre-rendered video is found.
+    """
+    import shutil
+
+    # ── Try direct MP4 copy from LeRobot dataset ──────────────────────────────
+    # Dataset structure: <gt_data_root>/<task>/videos/chunk-000/<cam_key>/episode_XXXXXX.mp4
+    # camera_name = "robot0_agentview_left"
+    # cam_key     = "observation.images.robot0_agentview_left"  (LeRobot convention)
+    task_ds = gt_data_root / task_name
+    if task_ds.exists():
+        vid_root = task_ds / "videos" / "chunk-000"
+        # find the right subdirectory: exact key first, then suffix match
+        cam_dir = None
+        exact = vid_root / f"observation.images.{camera_name}"
+        if exact.is_dir():
+            cam_dir = exact
+        else:
+            suffix = camera_name.split("robot0_")[-1]  # e.g. "agentview_left"
+            for d in sorted(vid_root.iterdir()) if vid_root.is_dir() else []:
+                if suffix in d.name:
+                    cam_dir = d
+                    break
+        if cam_dir is not None:
+            mp4s = sorted(cam_dir.glob("episode_*.mp4"))
+            if mp4s:
+                shutil.copy(mp4s[0], out_path)
+                print(f"    GT video:     {out_path}  (copied from dataset)")
+                return
+
+    # ── Fallback: replay GT actions in simulation ─────────────────────────────
     actions = _load_gt_actions(task_name, gt_data_root)
     if actions is None:
         print(f"  [GT] No demo data found for {task_name} — skipping GT video.")
         return
 
     try:
+        import robosuite as suite
         env = suite.make(**env_kwargs)
         obs = env.reset()
         frames = []
@@ -709,12 +741,12 @@ def _record_gt_video(
             if img_np.ndim == 4:
                 img_np = img_np[0]
             frames.append(img_np.copy())
-            obs, _, done, _ = env.step(action)
+            obs, _, done, _ = env.step(action[:env.action_spec[0].shape[0]])
             if done:
                 break
         env.close()
         save_video(frames, out_path, fps)
-        print(f"    GT video:     {out_path}")
+        print(f"    GT video:     {out_path}  (simulation replay)")
     except Exception as e:
         print(f"  [GT] Failed to record GT video for {task_name}: {e}")
 
