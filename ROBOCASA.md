@@ -248,6 +248,20 @@ python scripts/eval_robocasa365.py \
     --output_dir results/cogact-base-zero-shot
 ```
 
+**Single-task debug run** (1 task × 1 trial per scene = 5 trials total, fastest way to verify the pipeline end-to-end):
+```bash
+python scripts/eval_robocasa365.py \
+    --model_path pretrained/CogACT-Base \
+    --norm_stats_path data/robocasa/dataset_statistics.json \
+    --unnorm_key robocasa \
+    --action_model_type DiT-B \
+    --tasks TurnOnMicrowave \
+    --trials_per_scene 1 \
+    --robot Panda \
+    --output_dir results/debug \
+    --verbose
+```
+
 **Quick smoke-test** (atomic tasks only, 2 trials per scene = 10 trials per task):
 ```bash
 python scripts/eval_robocasa365.py \
