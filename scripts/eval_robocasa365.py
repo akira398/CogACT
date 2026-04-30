@@ -299,6 +299,25 @@ def _load_controller_config(controller_name: str) -> dict:
     return loader(default_controller=controller_name)
 
 
+def _patch_manipulation_env() -> None:
+    """Patch ManipulationEnv to accept load_model_on_init if missing.
+
+    robocasa v1.0 passes load_model_on_init= to ManipulationEnv, but robosuite
+    1.5.x (PyPI) doesn't have this parameter yet. Accept and ignore it so env
+    creation works with any robosuite release.
+    """
+    import inspect
+    try:
+        from robosuite.environments.manipulation.manipulation_env import ManipulationEnv
+        if "load_model_on_init" not in inspect.signature(ManipulationEnv.__init__).parameters:
+            _orig = ManipulationEnv.__init__
+            def _patched(self, *args, load_model_on_init=True, **kwargs):
+                return _orig(self, *args, **kwargs)
+            ManipulationEnv.__init__ = _patched
+    except Exception:
+        pass
+
+
 def make_env(
     task_name: str,
     layout_id: int,
@@ -316,6 +335,7 @@ def make_env(
         import robocasa.environments  # noqa: F401 — registers all RoboCasa envs
     except ImportError:
         import robocasa  # noqa: F401
+    _patch_manipulation_env()
 
     env_kwargs = dict(
         env_name=task_name,
