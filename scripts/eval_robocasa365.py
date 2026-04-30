@@ -339,6 +339,24 @@ def _patch_robosuite_compat() -> None:
     except Exception:
         pass
 
+    # robosuite 1.5.2 calls initialize_renderer() during __init__ before the
+    # full kitchen scene is assembled, so the render camera doesn't exist yet.
+    # Since we always use has_renderer=False the onscreen renderer is never
+    # needed — make initialize_renderer a no-op when has_renderer is False.
+    try:
+        from robosuite.environments.base import MujocoEnv
+        _orig_renderer = MujocoEnv.initialize_renderer
+        def _safe_renderer(self):
+            if not getattr(self, "has_renderer", True):
+                return
+            try:
+                _orig_renderer(self)
+            except ValueError:
+                pass
+        MujocoEnv.initialize_renderer = _safe_renderer
+    except Exception:
+        pass
+
 
 def make_env(
     task_name: str,

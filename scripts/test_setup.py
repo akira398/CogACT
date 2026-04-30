@@ -142,6 +142,20 @@ def _patch_robosuite_compat() -> None:
     except Exception:
         pass
 
+    try:
+        from robosuite.environments.base import MujocoEnv
+        _orig_renderer = MujocoEnv.initialize_renderer
+        def _safe_renderer(self):
+            if not getattr(self, "has_renderer", True):
+                return
+            try:
+                _orig_renderer(self)
+            except ValueError:
+                pass
+        MujocoEnv.initialize_renderer = _safe_renderer
+    except Exception:
+        pass
+
 
 def test_env(task: str = "TurnOnMicrowave") -> bool:
     section(f"2. RoboCasa environment ({task})")
