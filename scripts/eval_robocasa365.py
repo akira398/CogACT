@@ -287,6 +287,18 @@ def load_model(args: argparse.Namespace):
 # Environment helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _load_controller_config(controller_name: str) -> dict:
+    """Load robosuite controller config; handles API rename across versions."""
+    import robosuite as suite
+    loader = getattr(suite, "load_controller_config",
+                     getattr(suite, "load_part_controller_config", None))
+    if loader is None:
+        raise ImportError(
+            "robosuite has neither load_controller_config nor load_part_controller_config"
+        )
+    return loader(default_controller=controller_name)
+
+
 def make_env(
     task_name: str,
     layout_id: int,
@@ -308,7 +320,7 @@ def make_env(
     env_kwargs = dict(
         env_name=task_name,
         robots=robot,
-        controller_configs=suite.load_controller_config(default_controller=controller),
+        controller_configs=_load_controller_config(controller),
         has_renderer=False,
         has_offscreen_renderer=True,
         use_object_obs=False,
@@ -615,9 +627,7 @@ def record_videos(
         env_kwargs = dict(
             env_name=spec["task_name"],
             robots=args.robot,
-            controller_configs=__import__("robosuite").load_controller_config(
-                default_controller=args.controller
-            ),
+            controller_configs=_load_controller_config(args.controller),
             has_renderer=False,
             has_offscreen_renderer=True,
             use_object_obs=False,
