@@ -372,12 +372,17 @@ class CogACT(nn.Module):
             samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
         normalized_actions = samples[0].cpu().numpy()
 
-        # Un-normalize Actions        
+        # Un-normalize Actions
         action_norm_stats = self.get_action_stats(unnorm_key)
         mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
         action_high, action_low = np.array(action_norm_stats["q99"]), np.array(action_norm_stats["q01"])
+        # Truncate stats to model output dim (data may include extra mobile-base dims)
+        action_dim = normalized_actions.shape[-1]
+        action_high = action_high[:action_dim]
+        action_low = action_low[:action_dim]
+        mask = np.array(mask)[:action_dim]
         normalized_actions = np.clip(normalized_actions, -1, 1)
-        normalized_actions[:, 6] = np.where(normalized_actions[:, 6] < 0.5, 0, 1) 
+        normalized_actions[:, 6] = np.where(normalized_actions[:, 6] < 0.5, 0, 1)
         actions = np.where(
             mask,
             0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
@@ -550,8 +555,13 @@ class CogACT(nn.Module):
         action_norm_stats = self.get_action_stats(unnorm_key)
         mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
         action_high, action_low = np.array(action_norm_stats["q99"]), np.array(action_norm_stats["q01"])
+        # Truncate stats to model output dim (data may include extra mobile-base dims)
+        action_dim = normalized_actions.shape[-1]
+        action_high = action_high[:action_dim]
+        action_low = action_low[:action_dim]
+        mask = np.array(mask)[:action_dim]
         normalized_actions = np.clip(normalized_actions, -1, 1)
-        normalized_actions[:, :, 6] = np.where(normalized_actions[:, :, 6] < 0.5, 0, 1) 
+        normalized_actions[:, :, 6] = np.where(normalized_actions[:, :, 6] < 0.5, 0, 1)
         actions = np.where(
             mask,
             0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
