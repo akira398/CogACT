@@ -102,11 +102,9 @@ except Exception as e:
 echo ""
 echo "── Quick env creation test ───────────────────────────"
 python -c "
-import sys
+import sys, inspect
 sys.path.insert(0, '.')
 
-# Apply compat patches
-import inspect
 def _make_permissive(cls):
     sig = inspect.signature(cls.__init__)
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
@@ -115,8 +113,7 @@ def _make_permissive(cls):
     orig = cls.__init__
     def patched(self, *args, **kwargs):
         for k in list(kwargs):
-            if k not in valid:
-                kwargs.pop(k)
+            if k not in valid: kwargs.pop(k)
         return orig(self, *args, **kwargs)
     cls.__init__ = patched
 
@@ -128,29 +125,42 @@ try:
 except Exception as e:
     print('patch error:', e)
 
-try:
-    import robosuite as suite
-    import robocasa.environments
-    loader = getattr(suite, 'load_controller_config', getattr(suite, 'load_part_controller_config', None))
-    env = suite.make(
-        env_name='TurnOnMicrowave',
-        robots='Panda',
-        controller_configs=loader(default_controller='OSC_POSE'),
-        has_renderer=False, has_offscreen_renderer=True,
-        use_object_obs=False, use_camera_obs=True,
-        camera_names=['robot0_agentview_left'],
-        camera_heights=128, camera_widths=128,
-        layout_ids=1, style_ids=1,
-        obj_instance_split='B', translucent_robot=False,
-    )
-    obs = env.reset()
-    print('SUCCESS — env created and reset')
-    print('image shape:', obs['robot0_agentview_left_image'].shape)
-    env.close()
-except Exception as e:
-    import traceback
-    print('FAILED:', e)
-    traceback.print_exc()
+import robosuite as suite
+import robocasa.environments
+loader = getattr(suite, 'load_controller_config', getattr(suite, 'load_part_controller_config', None))
+
+# Monkey-patch sample_kitchen_object_helper to show what 'groups' value causes the error
+from robocasa.models.objects import kitchen_object_utils as kou
+_orig_helper = kou.sample_kitchen_object_helper
+def _debug_helper(groups, *a, **kw):
+    try:
+        return _orig_helper(groups, *a, **kw)
+    except ValueError:
+        print(f'  [DEBUG] sample_kitchen_object_helper failed for groups={repr(groups)}, split={kw.get(\"obj_instance_split\", kw.get(\"split\", \"?\"))}')
+        raise
+kou.sample_kitchen_object_helper = _debug_helper
+
+for split in ['A', 'B']:
+    for task in ['TurnOnMicrowave', 'OpenDrawer', 'CloseFridge']:
+        try:
+            env = suite.make(
+                env_name=task, robots='Panda',
+                controller_configs=loader(default_controller='OSC_POSE'),
+                has_renderer=False, has_offscreen_renderer=True,
+                use_object_obs=False, use_camera_obs=True,
+                camera_names=['robot0_agentview_left'],
+                camera_heights=128, camera_widths=128,
+                layout_ids=1, style_ids=1,
+                obj_instance_split=split, translucent_robot=False,
+            )
+            obs = env.reset()
+            print(f'  PASS  task={task}  split={split}  image={obs[\"robot0_agentview_left_image\"].shape}')
+            env.close()
+            break  # one success is enough
+        except ValueError:
+            print(f'  FAIL  task={task}  split={split}  → ValueError (see DEBUG above)')
+        except Exception as e:
+            print(f'  FAIL  task={task}  split={split}  → {type(e).__name__}: {e}')
 " 2>&1
 
 echo ""
