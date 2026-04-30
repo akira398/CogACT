@@ -181,7 +181,7 @@ def _patch_robosuite_compat() -> None:
             try:
                 env.sim.model.get_joint_qpos_addr("mobilebase0_joint_mobile_yaw")
                 return True
-            except ValueError:
+            except (ValueError, AttributeError):
                 return False
 
         _orig_set_robot_base = _eu.set_robot_base
