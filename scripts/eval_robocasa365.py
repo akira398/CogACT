@@ -300,34 +300,41 @@ def _load_controller_config(controller_name: str) -> dict:
 
 
 def _patch_robosuite_compat() -> None:
-    """Patch robosuite 1.5.x to accept kwargs that robocasa v1.0 passes.
+    """Make robosuite 1.5.x classes silently drop unknown kwargs from robocasa v1.0.
 
-    robocasa v1.0 was written against robosuite master which added:
-      - load_model_on_init  in ManipulationEnv.__init__
-      - enable_multiccd     in Task.__init__ (via ManipulationTask)
-    Neither exists in any released robosuite (1.5.x on PyPI). We accept and
-    drop them so env creation works without modifying robosuite source.
+    robocasa v1.0 was written against a robosuite dev version that added several
+    new __init__ parameters (load_model_on_init, enable_multiccd,
+    enable_sleeping_islands, ...). None exist in the released 1.5.x. Rather than
+    patching them one by one, we wrap the two affected classes to filter out any
+    kwarg that their original signature doesn't accept.
     """
     import inspect
 
-    def _add_kwarg(cls, param: str, default) -> None:
-        if param in inspect.signature(cls.__init__).parameters:
+    def _make_permissive(cls) -> None:
+        sig = inspect.signature(cls.__init__)
+        # Already accepts **kwargs — nothing to do
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD
+               for p in sig.parameters.values()):
             return
+        valid = frozenset(sig.parameters.keys()) - {"self"}
         _orig = cls.__init__
         def _patched(self, *args, **kwargs):
-            kwargs.pop(param, None)
+            dropped = {k for k in kwargs if k not in valid}
+            if dropped:
+                for k in dropped:
+                    kwargs.pop(k)
             return _orig(self, *args, **kwargs)
         cls.__init__ = _patched
 
     try:
         from robosuite.environments.manipulation.manipulation_env import ManipulationEnv
-        _add_kwarg(ManipulationEnv, "load_model_on_init", True)
+        _make_permissive(ManipulationEnv)
     except Exception:
         pass
 
     try:
         from robosuite.models.tasks import Task
-        _add_kwarg(Task, "enable_multiccd", False)
+        _make_permissive(Task)
     except Exception:
         pass
 

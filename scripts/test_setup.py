@@ -113,27 +113,32 @@ def test_imports() -> bool:
 # ── 2. Environment creation ───────────────────────────────────────────────────
 
 def _patch_robosuite_compat() -> None:
-    """Patch robosuite 1.5.x kwargs missing vs robocasa v1.0 expectations."""
+    """Make robosuite 1.5.x classes silently drop unknown kwargs from robocasa v1.0."""
     import inspect
 
-    def _add_kwarg(cls, param: str) -> None:
-        if param in inspect.signature(cls.__init__).parameters:
+    def _make_permissive(cls) -> None:
+        sig = inspect.signature(cls.__init__)
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD
+               for p in sig.parameters.values()):
             return
+        valid = frozenset(sig.parameters.keys()) - {"self"}
         _orig = cls.__init__
         def _patched(self, *args, **kwargs):
-            kwargs.pop(param, None)
+            for k in list(kwargs):
+                if k not in valid:
+                    kwargs.pop(k)
             return _orig(self, *args, **kwargs)
         cls.__init__ = _patched
 
     try:
         from robosuite.environments.manipulation.manipulation_env import ManipulationEnv
-        _add_kwarg(ManipulationEnv, "load_model_on_init")
+        _make_permissive(ManipulationEnv)
     except Exception:
         pass
 
     try:
         from robosuite.models.tasks import Task
-        _add_kwarg(Task, "enable_multiccd")
+        _make_permissive(Task)
     except Exception:
         pass
 
