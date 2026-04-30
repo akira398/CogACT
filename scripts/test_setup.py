@@ -274,7 +274,9 @@ def test_env(task: str = "TurnOnMicrowave") -> bool:
         return False
 
     try:
-        action = env.action_space.sample()
+        import numpy as _np
+        low, high = env.action_spec
+        action = _np.random.uniform(low, high)
         obs, _, _, _ = env.step(action)
         result("env.step(random_action)", True)
     except Exception as e:
