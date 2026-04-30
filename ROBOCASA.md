@@ -158,14 +158,31 @@ The pretrained CogACT model was trained on Open-X Embodiment data.
 To evaluate zero-shot on RoboCasa, we need to supply action normalization
 statistics computed from RoboCasa demonstrations.
 
+RoboCasa365 v1.0 data is downloaded in **LeRobot Parquet format** (not HDF5).
+The script auto-detects the format.
+
 ```bash
+# Point --data_root at the downloaded target split directory:
 python scripts/compute_robocasa_stats.py \
-    --data_root data/robocasa \
+    --data_root datasets/robocasa/v1.0/target \
     --output_path data/robocasa/dataset_statistics.json \
     --key robocasa
 ```
 
-This scans all `.hdf5` files under `data/robocasa`, computes per-dimension
+> `datasets/` is the default download location set by
+> `robocasa/scripts/setup_macros.py`. Adjust if you changed `DATASET_BASE_PATH`.
+
+**Run on a partial download** (e.g., while the rest is still downloading):
+
+```bash
+python scripts/compute_robocasa_stats.py \
+    --data_root datasets/robocasa/v1.0/target \
+    --tasks PickPlaceCounterToCabinet TurnOnMicrowave TurnOnSinkFaucet \
+    --output_path data/robocasa/dataset_statistics.json \
+    --key robocasa
+```
+
+This scans all `.parquet` files under the data root, computes per-dimension
 q1/q99 quantiles over actions, and writes:
 
 ```json
@@ -179,6 +196,8 @@ q1/q99 quantiles over actions, and writes:
   }
 }
 ```
+
+Re-running overwrites the file; you can recompute with more data at any time.
 
 ---
 
