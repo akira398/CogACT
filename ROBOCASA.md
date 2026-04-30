@@ -231,7 +231,9 @@ python scripts/eval_robocasa365.py \
     --trials_per_scene 2 \
     --task_set atomic_seen \
     --robot Panda \
-    --output_dir results/cogact-base-smoke-test
+    --output_dir results/cogact-base-smoke-test \
+    --record_n_videos 2 \
+    --gt_data_root datasets/robocasa/v1.0/target
 ```
 
 **Key flags:**
@@ -245,8 +247,16 @@ python scripts/eval_robocasa365.py \
 | `--cfg_scale` | 1.5 | Classifier-free guidance scale (1.0 = disabled). |
 | `--use_ddim` | True | Use DDIM sampling (faster). |
 | `--num_ddim_steps` | 10 | DDIM steps. |
+| `--record_n_videos` | 0 | Record N randomly chosen trials as MP4 after eval completes. |
+| `--gt_data_root` | None | Path to downloaded demo data for ground-truth replay videos. |
+| `--video_fps` | 10 | FPS for saved videos. |
 
 Results are saved to `--output_dir/results.json` and `summary.csv`.
+Videos (if requested) are saved to `--output_dir/videos/` as:
+- `<task>_scene<N>_trial<N>_policy_[success|fail].mp4` — model rollout
+- `<task>_scene<N>_trial<N>_GT.mp4` — human demo replay
+
+Requires `imageio[ffmpeg]` (or OpenCV as fallback): `pip install imageio[ffmpeg]`
 
 ---
 
