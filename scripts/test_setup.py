@@ -179,7 +179,7 @@ def test_env(task: str = "TurnOnMicrowave") -> bool:
             camera_widths=128,
             layout_ids=1,
             style_ids=1,
-            obj_instance_split="B",
+            obj_instance_split="target",
             translucent_robot=False,
         )
         result("env creation", True)

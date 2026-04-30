@@ -175,7 +175,7 @@ def _debug_helper(groups, *a, **kw):
         raise
 kou.sample_kitchen_object_helper = _debug_helper
 
-for split in ['A', 'B']:
+for split in ['target', 'pretrain']:
     for task in ['TurnOnMicrowave', 'OpenDrawer', 'CloseFridge']:
         try:
             env = suite.make(

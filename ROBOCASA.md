@@ -233,7 +233,7 @@ Re-running overwrites the file; you can recompute with more data at any time.
 Runs the **exact RoboCasa365 evaluation protocol**:
 - 50 tasks (18 atomic-seen + 16 composite-seen + 16 composite-unseen)
 - 5 fixed evaluation scenes per task × 10 trials = **50 trials per task**
-- Object instance split "B" (held-out from training)
+- Object instance split "target" (held-out from training; robocasa v1.0 renamed "B" → "target")
 - Reports per-task, per-split, and overall success rate
 
 ```bash

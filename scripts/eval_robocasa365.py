@@ -191,8 +191,9 @@ def parse_args() -> argparse.Namespace:
                    help="Primary camera fed to CogACT.")
     p.add_argument("--img_size", type=int, default=128,
                    help="Camera resolution (128 is the RoboCasa365 standard).")
-    p.add_argument("--object_instance_split", type=str, default="B",
-                   help="Object instance split. 'B' = held-out eval instances.")
+    p.add_argument("--object_instance_split", type=str, default="target",
+                   help="Object instance split. 'target' = held-out eval instances (robocasa v1.0). "
+                        "Use 'pretrain' for training objects, None for all.")
     p.add_argument("--atomic_horizon", type=int, default=ATOMIC_HORIZON)
     p.add_argument("--composite_horizon", type=int, default=COMPOSITE_HORIZON)
 
