@@ -48,9 +48,10 @@ Task splits (from robocasa/utils/dataset_registry.py):
 import argparse
 import json
 import os
+import random
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -210,6 +211,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", type=str, default="cuda")
     p.add_argument("--hf_token", type=str, default=None)
     p.add_argument("--verbose", action="store_true")
+
+    # Video recording
+    p.add_argument("--record_n_videos", type=int, default=0,
+                   help="Record N randomly chosen trials as MP4 (re-runs after eval). "
+                        "Videos saved to <output_dir>/videos/.")
+    p.add_argument("--video_fps", type=int, default=10)
+    p.add_argument("--gt_data_root", type=str, default=None,
+                   help="Path to downloaded demo data (Parquet or HDF5) for GT replay videos. "
+                        "E.g. datasets/robocasa/v1.0/target")
     return p.parse_args()
 
 
@@ -346,22 +356,28 @@ def run_episode(
     num_ddim_steps: int,
     action_exec_horizon: int,
     device: str,
-) -> bool:
-    """Run one episode; return True if successful."""
+    record: bool = False,
+) -> Tuple[bool, Optional[List[np.ndarray]]]:
+    """Run one episode; return (success, frames). frames is None unless record=True."""
     obs = env.reset()
     success = False
+    frames: Optional[List[np.ndarray]] = [] if record else None
 
     action_chunk = None
-    chunk_idx = 0  # position within the current action chunk
+    chunk_idx = 0
 
     for step in range(horizon):
+        # Grab current frame (always, to avoid duplicate obs fetches)
+        img_np = obs[f"{camera_name}_image"]
+        if img_np.ndim == 4:
+            img_np = img_np[0]
+
+        if frames is not None:
+            frames.append(img_np.copy())
+
         # Re-predict when chunk is exhausted or on first step
         if action_chunk is None or chunk_idx >= action_exec_horizon:
-            img_np = obs[f"{camera_name}_image"]
-            if img_np.ndim == 4:
-                img_np = img_np[0]
             pil_img = Image.fromarray(img_np.astype(np.uint8))
-
             with torch.no_grad():
                 action_chunk, _ = model.predict_action(
                     image=pil_img,
@@ -385,7 +401,7 @@ def run_episode(
         if done:
             break
 
-    return success
+    return success, frames
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -424,7 +440,7 @@ def evaluate_task(
                     seed=trial_seed,
                 )
                 instruction = get_instruction(env)
-                success = run_episode(
+                success, _ = run_episode(
                     model=model,
                     env=env,
                     instruction=instruction,
@@ -465,6 +481,199 @@ def evaluate_task(
         "n_trials": len(all_successes),
         "scene_results": scene_results,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Video recording helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def save_video(frames: List[np.ndarray], path: Path, fps: int = 10) -> None:
+    """Save a list of HWC uint8 RGB frames as MP4."""
+    if not frames:
+        return
+    try:
+        import imageio
+        imageio.mimsave(str(path), [f.astype(np.uint8) for f in frames], fps=fps)
+    except ImportError:
+        import cv2
+        h, w = frames[0].shape[:2]
+        out = cv2.VideoWriter(
+            str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
+        )
+        for frame in frames:
+            out.write(cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_RGB2BGR))
+        out.release()
+
+
+def _load_gt_actions(task_name: str, gt_data_root: Path) -> Optional[np.ndarray]:
+    """Return a (T, action_dim) array for a random GT demo of task_name, or None."""
+    # ── Parquet (RoboCasa365 v1.0) ──
+    parquet_files = [f for f in gt_data_root.rglob("*.parquet")
+                     if task_name in str(f)]
+    if parquet_files:
+        try:
+            import pandas as pd
+            pq_file = random.choice(parquet_files)
+            df = pd.read_parquet(pq_file)
+            action_col = next((c for c in ("action", "actions") if c in df.columns), None)
+            if action_col is None:
+                return None
+            if "episode_index" in df.columns:
+                ep_idx = int(df["episode_index"].sample(1).iloc[0])
+                df = df[df["episode_index"] == ep_idx]
+            return np.stack(df[action_col].to_list()).astype(np.float32)
+        except Exception as e:
+            print(f"  [GT] Parquet load error for {task_name}: {e}")
+
+    # ── HDF5 (RoboCasa v0.2) ──
+    hdf5_files = [f for f in gt_data_root.rglob("*.hdf5")
+                  if task_name in str(f)]
+    if hdf5_files:
+        try:
+            import h5py
+            hdf5_file = random.choice(hdf5_files)
+            with h5py.File(str(hdf5_file), "r") as f:
+                if "data" in f:
+                    demo_key = random.choice(list(f["data"].keys()))
+                    return f["data"][demo_key]["actions"][:].astype(np.float32)
+        except Exception as e:
+            print(f"  [GT] HDF5 load error for {task_name}: {e}")
+
+    return None
+
+
+def _record_gt_video(
+    task_name: str,
+    gt_data_root: Path,
+    env_kwargs: dict,
+    camera_name: str,
+    out_path: Path,
+    fps: int,
+) -> None:
+    """Replay a GT demo in simulation and save as video."""
+    import robosuite as suite
+
+    actions = _load_gt_actions(task_name, gt_data_root)
+    if actions is None:
+        print(f"  [GT] No demo data found for {task_name} — skipping GT video.")
+        return
+
+    try:
+        env = suite.make(**env_kwargs)
+        obs = env.reset()
+        frames = []
+        for action in actions:
+            img_np = obs[f"{camera_name}_image"]
+            if img_np.ndim == 4:
+                img_np = img_np[0]
+            frames.append(img_np.copy())
+            obs, _, done, _ = env.step(action)
+            if done:
+                break
+        env.close()
+        save_video(frames, out_path, fps)
+        print(f"    GT video:     {out_path}")
+    except Exception as e:
+        print(f"  [GT] Failed to record GT video for {task_name}: {e}")
+
+
+def record_videos(
+    model: Any,
+    tasks_to_eval: List[Tuple[str, str]],
+    args: argparse.Namespace,
+    out_dir: Path,
+) -> None:
+    """Re-run N randomly selected trials with video recording after the main eval."""
+    video_dir = out_dir / "videos"
+    video_dir.mkdir(exist_ok=True)
+
+    # Build a flat list of every (task, scene, trial) spec
+    all_specs = []
+    for task_idx, (task_name, split_name) in enumerate(tasks_to_eval):
+        is_composite = split_name in ("composite_seen", "composite_unseen")
+        for scene_idx, (layout_id, style_id) in enumerate(EVAL_SCENES):
+            for trial in range(args.trials_per_scene):
+                trial_seed = args.seed + task_idx * 10000 + scene_idx * 1000 + trial
+                all_specs.append({
+                    "task_name": task_name,
+                    "split": split_name,
+                    "is_composite": is_composite,
+                    "layout_id": layout_id,
+                    "style_id": style_id,
+                    "trial_seed": trial_seed,
+                    "label": f"{task_name}_scene{scene_idx}_trial{trial}",
+                })
+
+    chosen = random.sample(all_specs, min(args.record_n_videos, len(all_specs)))
+    print(f"\nRecording {len(chosen)} video(s) → {video_dir}")
+
+    gt_data_root = Path(args.gt_data_root) if args.gt_data_root else None
+
+    for spec in chosen:
+        label = spec["label"]
+        horizon = args.composite_horizon if spec["is_composite"] else args.atomic_horizon
+        env_kwargs = dict(
+            env_name=spec["task_name"],
+            robots=args.robot,
+            controller_configs=__import__("robosuite").load_controller_config(
+                default_controller=args.controller
+            ),
+            has_renderer=False,
+            has_offscreen_renderer=True,
+            use_object_obs=False,
+            use_camera_obs=True,
+            camera_names=[args.camera_name],
+            camera_heights=args.img_size,
+            camera_widths=args.img_size,
+            layout_ids=spec["layout_id"],
+            style_ids=spec["style_id"],
+            obj_instance_split=args.object_instance_split,
+            translucent_robot=False,
+            seed=spec["trial_seed"],
+        )
+
+        print(f"\n  [{label}]")
+        try:
+            import robosuite as suite
+            try:
+                import robocasa.environments  # noqa: F401
+            except ImportError:
+                import robocasa  # noqa: F401
+            env = suite.make(**env_kwargs)
+            instruction = get_instruction(env)
+            success, frames = run_episode(
+                model=model,
+                env=env,
+                instruction=instruction,
+                horizon=horizon,
+                camera_name=args.camera_name,
+                unnorm_key=args.unnorm_key,
+                cfg_scale=args.cfg_scale,
+                use_ddim=args.use_ddim,
+                num_ddim_steps=args.num_ddim_steps,
+                action_exec_horizon=args.action_exec_horizon,
+                device=args.device,
+                record=True,
+            )
+            env.close()
+
+            suffix = "success" if success else "fail"
+            policy_path = video_dir / f"{label}_policy_{suffix}.mp4"
+            save_video(frames, policy_path, fps=args.video_fps)
+            print(f"    Policy video: {policy_path}  (success={success})")
+        except Exception as e:
+            print(f"    [WARN] Policy video failed: {e}")
+
+        if gt_data_root:
+            gt_path = video_dir / f"{label}_GT.mp4"
+            _record_gt_video(
+                task_name=spec["task_name"],
+                gt_data_root=gt_data_root,
+                env_kwargs=env_kwargs,
+                camera_name=args.camera_name,
+                out_path=gt_path,
+                fps=args.video_fps,
+            )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -594,6 +803,10 @@ def main() -> None:
             f.write(f"AVG_{split.upper()},,-,{avg:.4f},-\n")
         f.write(f"OVERALL,,{overall_sr:.4f},{total_trials}\n")
     print(f"Summary CSV saved to:  {csv_file}")
+
+    # ── Record sample videos ──
+    if args.record_n_videos > 0:
+        record_videos(model, tasks_to_eval, args, out_dir)
 
 
 def _infer_split(task_name: str) -> str:
