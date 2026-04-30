@@ -357,49 +357,36 @@ def _patch_robosuite_compat() -> None:
     except Exception:
         pass
 
-    # robocasa's set_robot_base() unconditionally looks up the mobile-base yaw
-    # joint, which only exists on PandaMobile.  For fixed-base Panda we skip
-    # that one line and let the rest of the placement logic run as normal.
+    # robocasa's robot-placement functions hardcode mobile-base joint names that
+    # only exist on PandaMobile.  For a fixed-base Panda, skip all base-motion
+    # ops: set_robot_base returns anchor_pos (stored as init_robot_base_pos);
+    # set_robot_to_position becomes a no-op (robot is already in its XML pose).
     try:
+        import numpy as _np
         import robocasa.utils.env_utils as _eu
 
-        def _patched_set_robot_base(env, anchor_pos, anchor_ori, rot_dev, pos_dev_x, pos_dev_y):
-            assert len(env.robots) == 1
+        def _has_mobile_base(env):
             try:
-                yaw_addr = env.sim.model.get_joint_qpos_addr("mobilebase0_joint_mobile_yaw")
-                try:
-                    from robocasa.utils.env_utils import no_collision
-                    ctx = no_collision(env.sim)
-                except (ImportError, AttributeError):
-                    from contextlib import nullcontext
-                    ctx = nullcontext()
-                with ctx:
-                    env.sim.data.qpos[yaw_addr] = env.rng.uniform(-rot_dev, rot_dev)
-                    env.sim.forward()
+                env.sim.model.get_joint_qpos_addr("mobilebase0_joint_mobile_yaw")
+                return True
             except ValueError:
-                pass  # fixed-base robot — no mobile yaw joint
+                return False
 
-            initial_state_copy = env.sim.get_state()
-            found_valid = False
-            cur_dev_pos_x = pos_dev_x
-            cur_dev_pos_y = pos_dev_y
-            while not found_valid:
-                for _ in range(50):
-                    robot_pos = _eu.generate_random_robot_pos(
-                        env=env, anchor_pos=anchor_pos, anchor_ori=anchor_ori,
-                        pos_dev_x=cur_dev_pos_x, pos_dev_y=cur_dev_pos_y,
-                    )
-                    _eu.set_robot_to_position(env, robot_pos)
-                    env.sim.forward()
-                    if not _eu.detect_robot_collision(env):
-                        found_valid = True
-                        break
-                    env.sim.set_state(initial_state_copy)
-                cur_dev_pos_x += 0.10
-                cur_dev_pos_y += 0.05
-            return robot_pos
+        _orig_set_robot_base = _eu.set_robot_base
+        _orig_set_robot_to_position = _eu.set_robot_to_position
+
+        def _patched_set_robot_base(env, anchor_pos, anchor_ori, rot_dev, pos_dev_x, pos_dev_y):
+            if not _has_mobile_base(env):
+                return _np.asarray(anchor_pos, dtype=float)
+            return _orig_set_robot_base(env, anchor_pos, anchor_ori, rot_dev, pos_dev_x, pos_dev_y)
+
+        def _patched_set_robot_to_position(env, global_pos):
+            if not _has_mobile_base(env):
+                return
+            return _orig_set_robot_to_position(env, global_pos)
 
         _eu.set_robot_base = _patched_set_robot_base
+        _eu.set_robot_to_position = _patched_set_robot_to_position
     except Exception:
         pass
 
