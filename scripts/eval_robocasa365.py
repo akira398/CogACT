@@ -411,6 +411,17 @@ def _patch_robosuite_compat() -> None:
     # 'mobilebase0_support' (PandaMobile only).  For fixed-base Panda, that
     # body doesn't exist so edit_model_xml silently skips the cameras.
     # Add a "Panda" entry that remaps them to 'robot0_base' instead.
+    #
+    # Quaternion correction: robot0_base is rotated 90° CCW around world Z
+    # relative to mobilebase0_support, so the camera orientation quaternion
+    # must be pre-multiplied by R_base^T to preserve the intended world view.
+    # Corrected quats computed as: rot_to_quat(R_base.T @ quat_to_rot(q_orig))
+    # where R_base = [[0,-1,0],[1,0,0],[0,0,1]].
+    _PANDA_CAM_QUATS = {
+        "robot0_agentview_left":   [ 0.08575139,  0.05475419,  0.47810260,  0.87239130],
+        "robot0_agentview_right":  [-0.08575113, -0.05475419,  0.47810264,  0.87239130],
+        "robot0_agentview_center": [-0.01370830, -0.00890582,  0.46134642,  0.88706947],
+    }
     try:
         from copy import deepcopy
         from robocasa.utils import camera_utils as _cu
@@ -421,6 +432,8 @@ def _patch_robosuite_compat() -> None:
                 if _cam_cfg.get("parent_body") == "mobilebase0_support":
                     _cfg = deepcopy(_cam_cfg)
                     _cfg["parent_body"] = "robot0_base"
+                    if _cam_name in _PANDA_CAM_QUATS:
+                        _cfg["quat"] = _PANDA_CAM_QUATS[_cam_name]
                     panda_overrides[_cam_name] = _cfg
             if panda_overrides:
                 _cu.CAM_CONFIGS["Panda"] = panda_overrides

@@ -202,6 +202,13 @@ def _patch_robosuite_compat() -> None:
     except Exception:
         pass
 
+    # Quaternion correction: robot0_base is rotated 90° CCW around world Z
+    # relative to mobilebase0_support; correct quats are R_base.T @ R_orig.
+    _PANDA_CAM_QUATS = {
+        "robot0_agentview_left":   [ 0.08575139,  0.05475419,  0.47810260,  0.87239130],
+        "robot0_agentview_right":  [-0.08575113, -0.05475419,  0.47810264,  0.87239130],
+        "robot0_agentview_center": [-0.01370830, -0.00890582,  0.46134642,  0.88706947],
+    }
     try:
         from copy import deepcopy
         from robocasa.utils import camera_utils as _cu
@@ -212,6 +219,8 @@ def _patch_robosuite_compat() -> None:
                 if _cam_cfg.get("parent_body") == "mobilebase0_support":
                     _cfg = deepcopy(_cam_cfg)
                     _cfg["parent_body"] = "robot0_base"
+                    if _cam_name in _PANDA_CAM_QUATS:
+                        _cfg["quat"] = _PANDA_CAM_QUATS[_cam_name]
                     panda_overrides[_cam_name] = _cfg
             if panda_overrides:
                 _cu.CAM_CONFIGS["Panda"] = panda_overrides
