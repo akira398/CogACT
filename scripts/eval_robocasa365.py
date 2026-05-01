@@ -218,6 +218,9 @@ def parse_args() -> argparse.Namespace:
                    help="Record N randomly chosen trials as MP4 (re-runs after eval). "
                         "Videos saved to <output_dir>/videos/.")
     p.add_argument("--video_fps", type=int, default=10)
+    p.add_argument("--video_size", type=int, default=256,
+                   help="Camera resolution for recorded videos (independent of --img_size "
+                        "used for model inference). Higher = better quality.")
     p.add_argument("--gt_data_root", type=str, default=None,
                    help="Path to downloaded demo data (Parquet or HDF5) for GT replay videos. "
                         "E.g. datasets/robocasa/v1.0/target")
@@ -411,17 +414,6 @@ def _patch_robosuite_compat() -> None:
     # 'mobilebase0_support' (PandaMobile only).  For fixed-base Panda, that
     # body doesn't exist so edit_model_xml silently skips the cameras.
     # Add a "Panda" entry that remaps them to 'robot0_base' instead.
-    #
-    # Quaternion correction: robot0_base is rotated 90° CCW around world Z
-    # relative to mobilebase0_support, so the camera orientation quaternion
-    # must be pre-multiplied by R_base^T to preserve the intended world view.
-    # Corrected quats computed as: rot_to_quat(R_base.T @ quat_to_rot(q_orig))
-    # where R_base = [[0,-1,0],[1,0,0],[0,0,1]].
-    _PANDA_CAM_QUATS = {
-        "robot0_agentview_left":   [ 0.08575139,  0.05475419,  0.47810260,  0.87239130],
-        "robot0_agentview_right":  [-0.08575113, -0.05475419,  0.47810264,  0.87239130],
-        "robot0_agentview_center": [-0.01370830, -0.00890582,  0.46134642,  0.88706947],
-    }
     try:
         from copy import deepcopy
         from robocasa.utils import camera_utils as _cu
@@ -432,11 +424,19 @@ def _patch_robosuite_compat() -> None:
                 if _cam_cfg.get("parent_body") == "mobilebase0_support":
                     _cfg = deepcopy(_cam_cfg)
                     _cfg["parent_body"] = "robot0_base"
-                    if _cam_name in _PANDA_CAM_QUATS:
-                        _cfg["quat"] = _PANDA_CAM_QUATS[_cam_name]
                     panda_overrides[_cam_name] = _cfg
             if panda_overrides:
                 _cu.CAM_CONFIGS["Panda"] = panda_overrides
+    except Exception:
+        pass
+
+    # robosuite 1.5.x defaults to IMAGE_CONVENTION="opengl" which skips the
+    # vertical flip (img[::1] = no-op).  Raw MuJoCo frames are bottom-to-top,
+    # so without the flip images come out upside-down — both for the model
+    # input and for recorded videos.  Force "opencv" so img[::-1] is applied.
+    try:
+        import robosuite.macros as _macros
+        _macros.IMAGE_CONVENTION = "opencv"
     except Exception:
         pass
 
@@ -512,8 +512,13 @@ def run_episode(
     action_exec_horizon: int,
     device: str,
     record: bool = False,
+    inference_size: Optional[int] = None,
 ) -> Tuple[bool, Optional[List[np.ndarray]]]:
-    """Run one episode; return (success, frames). frames is None unless record=True."""
+    """Run one episode; return (success, frames). frames is None unless record=True.
+
+    inference_size: resize image to this square size before model inference.
+    Useful when the env is created at higher resolution for video recording.
+    """
     obs = env.reset()
     success = False
     frames: Optional[List[np.ndarray]] = [] if record else None
@@ -533,6 +538,8 @@ def run_episode(
         # Re-predict when chunk is exhausted or on first step
         if action_chunk is None or chunk_idx >= action_exec_horizon:
             pil_img = Image.fromarray(img_np.astype(np.uint8))
+            if inference_size is not None and (img_np.shape[0] != inference_size or img_np.shape[1] != inference_size):
+                pil_img = pil_img.resize((inference_size, inference_size), Image.BILINEAR)
             with torch.no_grad():
                 action_chunk, _ = model.predict_action(
                     image=pil_img,
@@ -808,8 +815,8 @@ def record_videos(
             use_object_obs=False,
             use_camera_obs=True,
             camera_names=[args.camera_name],
-            camera_heights=args.img_size,
-            camera_widths=args.img_size,
+            camera_heights=args.video_size,
+            camera_widths=args.video_size,
             layout_ids=spec["layout_id"],
             style_ids=spec["style_id"],
             obj_instance_split=args.object_instance_split,
@@ -839,6 +846,7 @@ def record_videos(
                 action_exec_horizon=args.action_exec_horizon,
                 device=args.device,
                 record=True,
+                inference_size=args.img_size,
             )
             env.close()
 
