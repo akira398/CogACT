@@ -693,6 +693,21 @@ def save_video(frames: List[np.ndarray], path: Path, fps: int = 10) -> None:
         out.release()
 
 
+def _find_task_dir(gt_data_root: Path, task_name: str) -> Optional[Path]:
+    """Find the dataset directory for task_name, handling atomic/composite subdirs."""
+    # Direct: <root>/<task>/
+    direct = gt_data_root / task_name
+    if direct.exists():
+        return direct
+    # One level deep: <root>/atomic/<task>/, <root>/composite/<task>/, etc.
+    for subdir in sorted(gt_data_root.iterdir()):
+        if subdir.is_dir():
+            candidate = subdir / task_name
+            if candidate.exists():
+                return candidate
+    return None
+
+
 def _load_gt_actions(task_name: str, gt_data_root: Path) -> Optional[np.ndarray]:
     """Return a (T, action_dim) array for a random GT demo of task_name, or None."""
     # ── Parquet (RoboCasa365 v1.0) ──
@@ -703,13 +718,24 @@ def _load_gt_actions(task_name: str, gt_data_root: Path) -> Optional[np.ndarray]
             import pandas as pd
             pq_file = random.choice(parquet_files)
             df = pd.read_parquet(pq_file)
+            # LeRobot format: action column may be named "action" or "actions",
+            # or stored as per-dimension columns "action.0", "action.1", ...
             action_col = next((c for c in ("action", "actions") if c in df.columns), None)
             if action_col is None:
+                # Try reconstructing from per-dimension columns
+                action_cols = sorted(c for c in df.columns if c.startswith("action."))
+                if action_cols:
+                    if "episode_index" in df.columns:
+                        ep_idx = int(df["episode_index"].sample(1).iloc[0])
+                        df = df[df["episode_index"] == ep_idx]
+                    return df[action_cols].values.astype(np.float32)
+                print(f"  [GT] No action column found. Available: {list(df.columns)[:10]}")
                 return None
             if "episode_index" in df.columns:
                 ep_idx = int(df["episode_index"].sample(1).iloc[0])
                 df = df[df["episode_index"] == ep_idx]
-            return np.stack(df[action_col].to_list()).astype(np.float32)
+            vals = df[action_col].to_list()
+            return np.stack(vals).astype(np.float32)
         except Exception as e:
             print(f"  [GT] Parquet load error for {task_name}: {e}")
 
@@ -738,29 +764,52 @@ def _record_gt_video(
     out_path: Path,
     fps: int,
 ) -> None:
-    """Save a GT demo video.
+    """Save a GT demo video by replaying actions in simulation.
 
-    First tries to copy a pre-rendered MP4 directly from the LeRobot dataset
-    (fast, no simulation needed, correct camera).  Falls back to simulation
-    replay only if no pre-rendered video is found.
+    Uses the same env/camera as the policy video so the two are directly
+    comparable.  Falls back to copying a pre-rendered MP4 only when no
+    Parquet actions are available.
     """
-    import shutil
+    # ── Preferred: replay GT actions in simulation (same camera as policy) ────
+    actions = _load_gt_actions(task_name, gt_data_root)
+    if actions is not None:
+        try:
+            import robosuite as suite
+            try:
+                import robocasa.environments  # noqa: F401
+            except ImportError:
+                import robocasa  # noqa: F401
+            env = suite.make(**env_kwargs)
+            obs = env.reset()
+            frames = []
+            action_dim = env.action_spec[0].shape[0]
+            for action in actions:
+                img_np = obs[f"{camera_name}_image"]
+                if img_np.ndim == 4:
+                    img_np = img_np[0]
+                frames.append(img_np.copy())
+                obs, _, done, _ = env.step(action[:action_dim])
+                if done:
+                    break
+            env.close()
+            save_video(frames, out_path, fps)
+            print(f"    GT video:     {out_path}  (simulation replay)")
+            return
+        except Exception as e:
+            print(f"  [GT] Simulation replay failed for {task_name}: {e}")
 
-    # ── Try direct MP4 copy from LeRobot dataset ──────────────────────────────
-    # Dataset structure: <gt_data_root>/<task>/videos/chunk-000/<cam_key>/episode_XXXXXX.mp4
-    # camera_name = "robot0_agentview_left"
-    # cam_key     = "observation.images.robot0_agentview_left"  (LeRobot convention)
-    task_ds = gt_data_root / task_name
-    if task_ds.exists():
+    # ── Fallback: copy pre-rendered MP4 from LeRobot dataset ─────────────────
+    import shutil
+    task_ds = _find_task_dir(gt_data_root, task_name)
+    if task_ds is not None:
         vid_root = task_ds / "videos" / "chunk-000"
-        # find the right subdirectory: exact key first, then suffix match
         cam_dir = None
         exact = vid_root / f"observation.images.{camera_name}"
         if exact.is_dir():
             cam_dir = exact
         else:
-            suffix = camera_name.split("robot0_")[-1]  # e.g. "agentview_left"
-            for d in sorted(vid_root.iterdir()) if vid_root.is_dir() else []:
+            suffix = camera_name.split("robot0_")[-1]
+            for d in (sorted(vid_root.iterdir()) if vid_root.is_dir() else []):
                 if suffix in d.name:
                     cam_dir = d
                     break
@@ -771,30 +820,7 @@ def _record_gt_video(
                 print(f"    GT video:     {out_path}  (copied from dataset)")
                 return
 
-    # ── Fallback: replay GT actions in simulation ─────────────────────────────
-    actions = _load_gt_actions(task_name, gt_data_root)
-    if actions is None:
-        print(f"  [GT] No demo data found for {task_name} — skipping GT video.")
-        return
-
-    try:
-        import robosuite as suite
-        env = suite.make(**env_kwargs)
-        obs = env.reset()
-        frames = []
-        for action in actions:
-            img_np = obs[f"{camera_name}_image"]
-            if img_np.ndim == 4:
-                img_np = img_np[0]
-            frames.append(img_np.copy())
-            obs, _, done, _ = env.step(action[:env.action_spec[0].shape[0]])
-            if done:
-                break
-        env.close()
-        save_video(frames, out_path, fps)
-        print(f"    GT video:     {out_path}  (simulation replay)")
-    except Exception as e:
-        print(f"  [GT] Failed to record GT video for {task_name}: {e}")
+    print(f"  [GT] No demo data found for {task_name} — skipping GT video.")
 
 
 def record_videos(
