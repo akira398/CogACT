@@ -465,6 +465,21 @@ def _patch_robosuite_compat() -> None:
     except Exception:
         pass
 
+    # robosuite 1.5.2 pip release ships default_pandaomron.json with
+    # "type": "JOINT_VELOCITY_LEGACY" for the mobile base, but the factory
+    # in 1.5.2 only knows "JOINT_VELOCITY".  Patch the factory to alias the
+    # legacy name to the standard one so PandaMobile envs can be created.
+    try:
+        import robosuite.controllers.parts.controller_factory as _cf
+        _orig_mb_factory = _cf.mobile_base_controller_factory
+        def _patched_mb_factory(name, params):
+            if name == "JOINT_VELOCITY_LEGACY":
+                name = "JOINT_VELOCITY"
+            return _orig_mb_factory(name, params)
+        _cf.mobile_base_controller_factory = _patched_mb_factory
+    except Exception:
+        pass
+
 
 def make_env(
     task_name: str,
