@@ -764,41 +764,13 @@ def _record_gt_video(
     out_path: Path,
     fps: int,
 ) -> None:
-    """Save a GT demo video by replaying actions in simulation.
+    """Save a GT demo video.
 
-    Uses the same env/camera as the policy video so the two are directly
-    comparable.  Falls back to copying a pre-rendered MP4 only when no
-    Parquet actions are available.
+    Copies the pre-rendered MP4 from the LeRobot dataset (PandaMobile demo,
+    correct task behaviour).  The camera angle differs from the policy video
+    but the task execution is correct, making it a useful reference.
     """
-    # ── Preferred: replay GT actions in simulation (same camera as policy) ────
-    actions = _load_gt_actions(task_name, gt_data_root)
-    if actions is not None:
-        try:
-            import robosuite as suite
-            try:
-                import robocasa.environments  # noqa: F401
-            except ImportError:
-                import robocasa  # noqa: F401
-            env = suite.make(**env_kwargs)
-            obs = env.reset()
-            frames = []
-            action_dim = env.action_spec[0].shape[0]
-            for action in actions:
-                img_np = obs[f"{camera_name}_image"]
-                if img_np.ndim == 4:
-                    img_np = img_np[0]
-                frames.append(img_np.copy())
-                obs, _, done, _ = env.step(action[:action_dim])
-                if done:
-                    break
-            env.close()
-            save_video(frames, out_path, fps)
-            print(f"    GT video:     {out_path}  (simulation replay)")
-            return
-        except Exception as e:
-            print(f"  [GT] Simulation replay failed for {task_name}: {e}")
-
-    # ── Fallback: copy pre-rendered MP4 from LeRobot dataset ─────────────────
+    # ── Copy pre-rendered MP4 from LeRobot dataset ────────────────────────────
     import shutil
     task_ds = _find_task_dir(gt_data_root, task_name)
     if task_ds is not None:
