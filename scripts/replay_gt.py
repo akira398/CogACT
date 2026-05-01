@@ -2,24 +2,19 @@
 replay_gt.py — replay GT actions from the LeRobot dataset in simulation.
 
 Uses PandaMobile (the robot the demos were recorded with) so the actions
-execute correctly.  Useful as a sanity check: if GT replay fails, the
-environment setup (robot placement, cameras, scene) is broken.
+execute correctly.  Each episode's exact scene (layout_id, style_id) is
+read from the per-episode ep_meta.json, ensuring the kitchen matches the
+recorded actions.
 
 Usage:
+    # Single task, 3 episodes, each in its original scene:
     python scripts/replay_gt.py \
         --gt_data_root datasets/robocasa/v1.0/target \
         --tasks TurnOnMicrowave \
+        --n_episodes 3 \
         --output_dir results/gt_replay
 
-    # Try all 5 eval scenes, 2 episodes each:
-    python scripts/replay_gt.py \
-        --gt_data_root datasets/robocasa/v1.0/target \
-        --tasks TurnOnMicrowave \
-        --all_scenes \
-        --n_episodes 2 \
-        --output_dir results/gt_replay
-
-    # Verbose step-by-step (see rewards each step):
+    # Verbose (print step rewards):
     python scripts/replay_gt.py \
         --gt_data_root datasets/robocasa/v1.0/target \
         --tasks TurnOnMicrowave \
@@ -28,18 +23,33 @@ Usage:
 """
 
 import argparse
+import json
 import sys
-import os
 from pathlib import Path
 
 import numpy as np
 
-# Bring eval_robocasa365 into path so we can import shared helpers.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+# ── Episode loading ────────────────────────────────────────────────────────────
+
+def _find_ep_meta(task_ds: Path, ep_idx: int) -> dict:
+    """Return the ep_meta dict for episode ep_idx, or {} if not found."""
+    # LeRobot extras layout: <task_ds>/<date>/lerobot/extras/episode_XXXXXX/ep_meta.json
+    # or directly: <task_ds>/extras/episode_XXXXXX/ep_meta.json
+    ep_dir_name = f"episode_{ep_idx:06d}"
+    for meta_path in task_ds.rglob(f"{ep_dir_name}/ep_meta.json"):
+        try:
+            with open(meta_path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
 def _load_episodes(gt_data_root: Path, task_name: str, n_episodes: int):
-    """Return a list of (T, action_dim) arrays, one per episode (up to n_episodes)."""
+    """Return list of (ep_idx, actions, ep_meta) for up to n_episodes."""
     from scripts.eval_robocasa365 import _find_task_dir
 
     task_ds = _find_task_dir(gt_data_root, task_name)
@@ -55,10 +65,9 @@ def _load_episodes(gt_data_root: Path, task_name: str, n_episodes: int):
     try:
         import pandas as pd
     except ImportError:
-        print("  [ERROR] pandas is required: pip install pandas pyarrow")
+        print("  [ERROR] pandas required: pip install pandas pyarrow")
         return []
 
-    # Collect all rows from all parquet files and group by episode_index.
     dfs = []
     for f in parquet_files:
         try:
@@ -69,54 +78,58 @@ def _load_episodes(gt_data_root: Path, task_name: str, n_episodes: int):
         return []
     df = pd.concat(dfs, ignore_index=True)
 
-    # Detect action columns.
     action_col = next((c for c in ("action", "actions") if c in df.columns), None)
     action_dim_cols = sorted(c for c in df.columns if c.startswith("action."))
 
     if action_col is None and not action_dim_cols:
-        print(f"  [ERROR] No action column found. Available: {list(df.columns)[:15]}")
+        print(f"  [ERROR] No action column. Available: {list(df.columns)[:15]}")
         return []
 
-    episodes = []
-    ep_indices = sorted(df["episode_index"].unique()) if "episode_index" in df.columns else [None]
+    ep_indices = sorted(df["episode_index"].unique()) if "episode_index" in df.columns else [0]
 
+    episodes = []
     for ep_idx in ep_indices[:n_episodes]:
-        if ep_idx is not None:
-            ep_df = df[df["episode_index"] == ep_idx].reset_index(drop=True)
-        else:
-            ep_df = df
+        ep_df = df[df["episode_index"] == ep_idx].reset_index(drop=True) if "episode_index" in df.columns else df
 
         if action_col:
-            vals = ep_df[action_col].to_list()
-            actions = np.stack(vals).astype(np.float32)
+            actions = np.stack(ep_df[action_col].to_list()).astype(np.float32)
         else:
             actions = ep_df[action_dim_cols].values.astype(np.float32)
 
-        episodes.append((int(ep_idx) if ep_idx is not None else 0, actions))
+        ep_meta = _find_ep_meta(task_ds, int(ep_idx))
+        episodes.append((int(ep_idx), actions, ep_meta))
 
-    print(f"  Loaded {len(episodes)} episodes for {task_name}  "
-          f"(action_dim={episodes[0][1].shape[1] if episodes else '?'})")
+    action_dim = episodes[0][1].shape[1] if episodes else "?"
+    print(f"  Loaded {len(episodes)} episodes  action_dim={action_dim}")
+
+    missing_meta = sum(1 for _, _, m in episodes if not m)
+    if missing_meta:
+        print(f"  [WARN] {missing_meta}/{len(episodes)} episodes have no ep_meta.json "
+              f"(will use --layout_id/--style_id fallback)")
+
     return episodes
 
 
-def replay_episode(env, actions, camera_name: str, horizon: int, verbose: bool):
+# ── Replay ─────────────────────────────────────────────────────────────────────
+
+def replay_episode(env, actions: np.ndarray, camera_name: str,
+                   horizon: int, verbose: bool):
     """Replay actions in env; return (success, frames)."""
     obs = env.reset()
     frames = []
-    success = False
     action_dim = env.action_spec[0].shape[0]
 
     if actions.shape[1] != action_dim:
-        print(f"    [WARN] GT action_dim={actions.shape[1]}, env action_dim={action_dim}. "
-              f"Truncating/padding GT actions to {action_dim}.")
+        print(f"    [WARN] GT action_dim={actions.shape[1]}, env action_dim={action_dim} "
+              f"— truncating/padding.")
 
+    success = False
     for step in range(min(len(actions), horizon)):
         img_np = obs[f"{camera_name}_image"]
         if img_np.ndim == 4:
             img_np = img_np[0]
         frames.append(img_np.copy())
 
-        # Adapt action dimension.
         a = actions[step]
         if len(a) >= action_dim:
             a = a[:action_dim]
@@ -126,7 +139,7 @@ def replay_episode(env, actions, camera_name: str, horizon: int, verbose: bool):
         obs, reward, done, info = env.step(a)
 
         if verbose and step % 20 == 0:
-            print(f"      step {step:4d}  reward={reward:.3f}")
+            print(f"      step {step:4d}  reward={reward:.4f}")
 
         if done:
             success = bool(info.get("success", False))
@@ -134,7 +147,6 @@ def replay_episode(env, actions, camera_name: str, horizon: int, verbose: bool):
                 print(f"      done at step {step}  success={success}")
             break
     else:
-        # Horizon reached — check success from last info.
         try:
             success = bool(env._check_success())
         except Exception:
@@ -143,45 +155,42 @@ def replay_episode(env, actions, camera_name: str, horizon: int, verbose: bool):
     return success, frames
 
 
+# ── Main ───────────────────────────────────────────────────────────────────────
+
 def main():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--gt_data_root", required=True,
-                   help="Path to LeRobot dataset root (e.g. datasets/robocasa/v1.0/target)")
-    p.add_argument("--tasks", nargs="+", default=["TurnOnMicrowave"],
-                   help="Task names to replay.")
+                   help="LeRobot dataset root (e.g. datasets/robocasa/v1.0/target)")
+    p.add_argument("--tasks", nargs="+", default=["TurnOnMicrowave"])
+    p.add_argument("--n_episodes", type=int, default=3,
+                   help="GT episodes to replay per task.")
     p.add_argument("--robot", default="PandaMobile",
-                   help="Robot type. Use PandaMobile to match GT demos.")
+                   help="Robot. PandaMobile matches the GT recordings.")
     p.add_argument("--controller", default="OSC_POSE")
     p.add_argument("--camera_name", default="robot0_agentview_left")
     p.add_argument("--img_size", type=int, default=256)
-    p.add_argument("--layout_id", type=int, default=1,
-                   help="Kitchen layout to use (0–4). Ignored if --all_scenes.")
-    p.add_argument("--style_id", type=int, default=1,
-                   help="Kitchen style to use (0–4). Ignored if --all_scenes.")
-    p.add_argument("--all_scenes", action="store_true",
-                   help="Cycle through all 5 eval (layout, style) pairs instead of one scene.")
-    p.add_argument("--n_episodes", type=int, default=1,
-                   help="Number of GT episodes to replay per task (per scene).")
-    p.add_argument("--horizon", type=int, default=1000,
-                   help="Max steps per episode.")
     p.add_argument("--object_instance_split", default="target")
+    p.add_argument("--horizon", type=int, default=1500,
+                   help="Max steps per episode.")
     p.add_argument("--fps", type=int, default=10)
     p.add_argument("--output_dir", default="results/gt_replay")
     p.add_argument("--verbose", action="store_true")
+    # Fallback scene if ep_meta.json is missing:
+    p.add_argument("--layout_id", type=int, default=1)
+    p.add_argument("--style_id", type=int, default=1)
     args = p.parse_args()
 
     gt_root = Path(args.gt_data_root)
     if not gt_root.exists():
-        print(f"ERROR: --gt_data_root does not exist: {gt_root}", file=sys.stderr)
+        print(f"ERROR: {gt_root} does not exist", file=sys.stderr)
         sys.exit(1)
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Import shared helpers (also applies all monkey-patches via make_env).
-    from scripts.eval_robocasa365 import make_env, save_video, EVAL_SCENES
+    from scripts.eval_robocasa365 import make_env, save_video
 
-    scenes = EVAL_SCENES if args.all_scenes else [(args.layout_id, args.style_id)]
+    summary = []
 
     for task_name in args.tasks:
         print(f"\n{'='*60}")
@@ -192,56 +201,68 @@ def main():
         if not episodes:
             continue
 
-        for layout_id, style_id in scenes:
-            scene_label = f"layout{layout_id}_style{style_id}"
-            print(f"\n  Scene: {scene_label}")
+        for ep_idx, actions, ep_meta in episodes:
+            layout_id = ep_meta.get("layout_id", args.layout_id)
+            style_id  = ep_meta.get("style_id",  args.style_id)
+            scene_src = "ep_meta" if ep_meta else "fallback"
+            label = f"{task_name}_layout{layout_id}_style{style_id}_ep{ep_idx:03d}"
+            out_path = out_dir / f"{label}_GT.mp4"
 
-            for ep_idx, actions in episodes:
-                label = f"{task_name}_{scene_label}_ep{ep_idx:03d}"
-                out_path = out_dir / f"{label}_GT.mp4"
+            print(f"\n  Episode {ep_idx}: {len(actions)} steps  "
+                  f"scene=layout{layout_id}/style{style_id} ({scene_src})")
+            print(f"  → {out_path.name}")
 
-                print(f"    Episode {ep_idx}: {len(actions)} steps → {out_path.name}")
+            try:
+                env = make_env(
+                    task_name=task_name,
+                    layout_id=layout_id,
+                    style_id=style_id,
+                    robot=args.robot,
+                    controller=args.controller,
+                    camera_name=args.camera_name,
+                    img_size=args.img_size,
+                    object_instance_split=args.object_instance_split,
+                )
+            except Exception as e:
+                print(f"  [ERROR] env creation failed: {e}")
+                import traceback; traceback.print_exc()
+                summary.append((task_name, ep_idx, "ENV_ERROR"))
+                continue
 
+            try:
+                success, frames = replay_episode(
+                    env, actions,
+                    camera_name=args.camera_name,
+                    horizon=args.horizon,
+                    verbose=args.verbose,
+                )
+                env.close()
+            except Exception as e:
+                print(f"  [ERROR] replay failed: {e}")
+                import traceback; traceback.print_exc()
                 try:
-                    env = make_env(
-                        task_name=task_name,
-                        layout_id=layout_id,
-                        style_id=style_id,
-                        robot=args.robot,
-                        controller=args.controller,
-                        camera_name=args.camera_name,
-                        img_size=args.img_size,
-                        object_instance_split=args.object_instance_split,
-                    )
-                except Exception as e:
-                    print(f"    [ERROR] env creation failed: {e}")
-                    import traceback; traceback.print_exc()
-                    continue
-
-                try:
-                    success, frames = replay_episode(
-                        env, actions,
-                        camera_name=args.camera_name,
-                        horizon=args.horizon,
-                        verbose=args.verbose,
-                    )
                     env.close()
-                except Exception as e:
-                    print(f"    [ERROR] replay failed: {e}")
-                    import traceback; traceback.print_exc()
-                    try:
-                        env.close()
-                    except Exception:
-                        pass
-                    continue
+                except Exception:
+                    pass
+                summary.append((task_name, ep_idx, "REPLAY_ERROR"))
+                continue
 
-                status = "SUCCESS" if success else "FAIL"
-                print(f"    {status}  ({len(frames)} frames recorded)")
-                if frames:
-                    save_video(frames, out_path, fps=args.fps)
-                    print(f"    Saved: {out_path}")
+            status = "SUCCESS" if success else "FAIL"
+            print(f"  {status}  ({len(frames)} frames)")
+            summary.append((task_name, ep_idx, status))
 
-    print(f"\nDone. Videos in {out_dir}/")
+            if frames:
+                save_video(frames, out_path, fps=args.fps)
+                print(f"  Saved: {out_path}")
+
+    print(f"\n{'='*60}")
+    print("  Summary")
+    print(f"{'='*60}")
+    for task_name, ep_idx, status in summary:
+        print(f"  {task_name}  ep{ep_idx:03d}  {status}")
+    n_ok = sum(1 for _, _, s in summary if s == "SUCCESS")
+    print(f"\n  {n_ok}/{len(summary)} succeeded")
+    print(f"\nVideos: {out_dir}/")
 
 
 if __name__ == "__main__":
