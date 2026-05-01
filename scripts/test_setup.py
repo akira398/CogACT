@@ -188,6 +188,13 @@ def _patch_robosuite_compat() -> None:
 
         def _patched_set_robot_base(env, anchor_pos, anchor_ori, rot_dev, pos_dev_x, pos_dev_y):
             if not _has_mobile_base(env):
+                try:
+                    body_id = env.sim.model.body_name2id("robot0_base")
+                    target = _np.asarray(anchor_pos, dtype=float)
+                    env.sim.model.body_pos[body_id][:2] = target[:2]
+                    env.sim.forward()
+                except Exception:
+                    pass
                 return _np.asarray(anchor_pos, dtype=float)
             return _orig_set_robot_base(env, anchor_pos, anchor_ori, rot_dev, pos_dev_x, pos_dev_y)
 
