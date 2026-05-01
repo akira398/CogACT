@@ -194,6 +194,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--object_instance_split", type=str, default="target",
                    help="Object instance split. 'target' = held-out eval instances (robocasa v1.0). "
                         "Use 'pretrain' for training objects, None for all.")
+    p.add_argument("--num_scenes", type=int, default=None,
+                   help="Limit evaluation to the first N of the 5 fixed scenes per task. "
+                        "Use 1 for a quick sanity check (1 scene × trials_per_scene trials).")
     p.add_argument("--atomic_horizon", type=int, default=ATOMIC_HORIZON)
     p.add_argument("--composite_horizon", type=int, default=COMPOSITE_HORIZON)
 
@@ -585,7 +588,8 @@ def evaluate_task(
     all_successes = []
     scene_results = []
 
-    for scene_idx, (layout_id, style_id) in enumerate(EVAL_SCENES):
+    scenes = EVAL_SCENES[:args.num_scenes] if args.num_scenes else EVAL_SCENES
+    for scene_idx, (layout_id, style_id) in enumerate(scenes):
         scene_successes = []
         for trial in range(args.trials_per_scene):
             trial_seed = args.seed + scene_seed_offset + scene_idx * 1000 + trial
@@ -785,7 +789,8 @@ def record_videos(
     all_specs = []
     for task_idx, (task_name, split_name) in enumerate(tasks_to_eval):
         is_composite = split_name in ("composite_seen", "composite_unseen")
-        for scene_idx, (layout_id, style_id) in enumerate(EVAL_SCENES):
+        scenes = EVAL_SCENES[:args.num_scenes] if args.num_scenes else EVAL_SCENES
+        for scene_idx, (layout_id, style_id) in enumerate(scenes):
             for trial in range(args.trials_per_scene):
                 trial_seed = args.seed + task_idx * 10000 + scene_idx * 1000 + trial
                 all_specs.append({
@@ -896,12 +901,13 @@ def main() -> None:
                 tasks_to_eval.append((t, split_name))
 
     total_tasks = len(tasks_to_eval)
-    total_trials = total_tasks * len(EVAL_SCENES) * args.trials_per_scene
+    n_scenes = min(args.num_scenes, len(EVAL_SCENES)) if args.num_scenes else len(EVAL_SCENES)
+    total_trials = total_tasks * n_scenes * args.trials_per_scene
     print(f"\n=== RoboCasa365 Evaluation ===")
     print(f"  Model:          {args.model_path}")
     print(f"  Splits:         {args.task_set}")
     print(f"  Tasks:          {total_tasks}")
-    print(f"  Scenes/task:    {len(EVAL_SCENES)} (fixed)")
+    print(f"  Scenes/task:    {n_scenes}{' (limited)' if args.num_scenes else ' (all 5)'}")
     print(f"  Trials/scene:   {args.trials_per_scene}")
     print(f"  Total trials:   {total_trials}")
     print(f"  Robot:          {args.robot}")
