@@ -381,9 +381,10 @@ def _patch_robosuite_compat() -> None:
         pass
 
     # robocasa's robot-placement functions hardcode mobile-base joint names that
-    # only exist on PandaMobile.  For a fixed-base Panda, skip all base-motion
-    # ops: set_robot_base returns anchor_pos (stored as init_robot_base_pos);
-    # set_robot_to_position becomes a no-op (robot is already in its XML pose).
+    # only exist on PandaMobile.  For a fixed-base Panda, robot0_base body
+    # position is updated directly via model.body_pos (it is a direct child of
+    # worldbody, so body_pos == world position).  set_robot_base still returns
+    # the anchor position so kitchen.py stores it as init_robot_base_pos.
     try:
         import numpy as _np
         import robocasa.utils.env_utils as _eu
@@ -405,6 +406,18 @@ def _patch_robosuite_compat() -> None:
 
         def _patched_set_robot_to_position(env, global_pos):
             if not _has_mobile_base(env):
+                # Teleport robot0_base to the kitchen's anchor position.
+                # The robot is parked at [10, 10, z] in the XML; without this
+                # move the kitchen would be in the scene but the robot would
+                # be stranded in empty space and cameras would see no kitchen.
+                try:
+                    body_id = env.sim.model.body_name2id("robot0_base")
+                    target = _np.asarray(global_pos, dtype=float)
+                    env.sim.model.body_pos[body_id][:2] = target[:2]
+                    # keep the z from the XML (surface height, not overridden)
+                    env.sim.forward()
+                except Exception:
+                    pass
                 return
             return _orig_set_robot_to_position(env, global_pos)
 
