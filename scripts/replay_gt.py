@@ -112,12 +112,36 @@ def _load_episodes(gt_data_root: Path, task_name: str, n_episodes: int):
 
 # ── Replay ─────────────────────────────────────────────────────────────────────
 
+def _print_action_info(env, gt_actions: np.ndarray) -> None:
+    """Print action split and a few GT samples so we can diagnose ordering issues."""
+    low, high = env.action_spec
+    print(f"    env action_dim={len(low)}")
+
+    # Print composite controller action split if available.
+    try:
+        robot = env.robots[0]
+        cc = robot.composite_controller
+        print(f"    composite_controller action split:")
+        for part, (s, e) in cc._action_split_indexes.items():
+            print(f"      [{s}:{e}] ({e-s} dim) → {part}")
+    except Exception as e:
+        print(f"    (could not read action split: {e})")
+
+    print(f"    GT action_dim={gt_actions.shape[1]}")
+    print(f"    First 3 GT actions:")
+    for i, a in enumerate(gt_actions[:3]):
+        print(f"      [{i}] {np.array2string(a, precision=3, suppress_small=True)}")
+
+
 def replay_episode(env, actions: np.ndarray, camera_name: str,
-                   horizon: int, verbose: bool):
+                   horizon: int, verbose: bool, diag: bool = False):
     """Replay actions in env; return (success, frames)."""
     obs = env.reset()
     frames = []
     action_dim = env.action_spec[0].shape[0]
+
+    if diag:
+        _print_action_info(env, actions)
 
     if actions.shape[1] != action_dim:
         print(f"    [WARN] GT action_dim={actions.shape[1]}, env action_dim={action_dim} "
@@ -175,6 +199,8 @@ def main():
     p.add_argument("--fps", type=int, default=10)
     p.add_argument("--output_dir", default="results/gt_replay")
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--diag", action="store_true",
+                   help="Print action split and first GT actions on episode 0 to diagnose ordering.")
     # Fallback scene if ep_meta.json is missing:
     p.add_argument("--layout_id", type=int, default=1)
     p.add_argument("--style_id", type=int, default=1)
@@ -229,12 +255,14 @@ def main():
                 summary.append((task_name, ep_idx, "ENV_ERROR"))
                 continue
 
+            first_ep = (ep_idx == episodes[0][0])
             try:
                 success, frames = replay_episode(
                     env, actions,
                     camera_name=args.camera_name,
                     horizon=args.horizon,
                     verbose=args.verbose,
+                    diag=(args.diag and first_ep),
                 )
                 env.close()
             except Exception as e:
